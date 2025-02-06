@@ -13,7 +13,7 @@ from msal import ConfidentialClientApplication
 from services.access_service import AccessService, AuthConfigValidationError, UserRoleAssignmentError
 from core import config
 from db.errors import DuplicateEntity, EntityDoesNotExist
-from models.domain.authentication import User, AssignableUser, Role, RoleAssignment
+from models.domain.authentication import AssignedRole, RoleSourceOrigin, User, AssignableUser, Role, RoleAssignment
 from models.domain.workspace import Workspace, WorkspaceRole
 from resources import strings
 from db.repositories.workspaces import WorkspaceRepository
@@ -140,10 +140,13 @@ class AzureADAuthorization(AccessService):
     def _get_user_from_token(decoded_token: dict) -> User:
         user_id = decoded_token['oid']
 
+        roles=decoded_token.get('roles', [])
+        mapped_roles=list(map(lambda role: AssignedRole(name=role, origin=RoleSourceOrigin.system), roles))
+
         return User(id=user_id,
                     name=decoded_token.get('name', ''),
                     email=decoded_token.get('email', ''),
-                    roles=decoded_token.get('roles', []))
+                    roles=mapped_roles)
 
     def _decode_token(self, token: str, ws_app_reg_id: str) -> dict:
         key_id = self._get_key_id(token)
@@ -264,11 +267,11 @@ class AzureADAuthorization(AccessService):
 
         return users_graph_data
 
-    def _get_roles_for_principal(self, user_id, roles_graph_data, app_id_to_role_name):
+    def _get_roles_for_principal(self, user_id, roles_graph_data, app_id_to_role_name, origin: RoleSourceOrigin):
         roles = []
         for role_assignment in roles_graph_data["value"]:
             if role_assignment["principalId"] == user_id:
-                roles.append(app_id_to_role_name[role_assignment["appRoleId"]])
+                roles.append(AssignedRole(name=app_id_to_role_name[role_assignment["appRoleId"]], origin=source))
         return roles
 
     def _get_users_inc_groups_from_response(self, users_graph_data, roles_graph_data, app_id_to_role_name) -> List[User]:
@@ -282,7 +285,7 @@ class AzureADAuthorization(AccessService):
                 if "users" in user_data["body"]["@odata.context"]:
                     user_email = user_data["body"]["userPrincipalName"]
                     # if user with id does not already exist in users
-                    user_roles=self._get_roles_for_principal(user_id, roles_graph_data, app_id_to_role_name)
+                    user_roles=self._get_roles_for_principal(user_id, roles_graph_data, app_id_to_role_name, RoleSourceOrigin.app)
                     if not any(user.id == user_id for user in users):
                         users.append(User(id=user_id, name=user_name, email=user_email, roles=user_roles))
                     else:
@@ -298,7 +301,7 @@ class AzureADAuthorization(AccessService):
                     user_name = group_member["displayName"]
                     user_email = group_member["userPrincipalName"]
 
-                    group_roles=self._get_roles_for_principal(group_id, roles_graph_data, app_id_to_role_name)
+                    group_roles=self._get_roles_for_principal(group_id, roles_graph_data, app_id_to_role_name, RoleSourceOrigin.group)
                     if not any(user.id == user_id for user in users):
                         users.append(User(id=user_id, name=user_name, email=user_email, roles=group_roles))
                     else:
@@ -353,9 +356,9 @@ class AzureADAuthorization(AccessService):
         for user in users:
             if user.email:
                 for role in user.roles:
-                    if role not in workspace_role_assignments_details:
-                        workspace_role_assignments_details[role] = []
-                    workspace_role_assignments_details[role].append(user.email)
+                    if role.name not in workspace_role_assignments_details:
+                        workspace_role_assignments_details[role.name] = []
+                    workspace_role_assignments_details[role.name].append(user.email)
         return workspace_role_assignments_details
 
     def get_workspace_role_by_name(self, name: str, workspace: Workspace) -> Role:
@@ -390,7 +393,7 @@ class AzureADAuthorization(AccessService):
             return self._assign_workspace_user_to_application(user, workspace, role)
 
     def _is_user_in_role(self, user: User, role: Role) -> bool:
-        return any(r for r in user.roles if r == role.value)
+        return any(r for r in user.roles if r.name == role.value)
 
     def _is_workspace_role_group_in_use(self, workspace: Workspace) -> bool:
         msgraph_token = self._get_msgraph_token()
