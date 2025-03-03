@@ -184,12 +184,3 @@ async def get_airlock_container_link_method(workspace=Depends(get_deployed_works
                                             user=Depends(get_current_workspace_owner_or_researcher_user_or_airlock_manager)) -> AirlockRequestTokenInResponse:
     container_url = get_airlock_container_link(airlock_request, user, workspace)
     return AirlockRequestTokenInResponse(containerUrl=container_url)
-
-@airlock_workspace_router.get("/workspaces/{workspace_id}/requests/{airlock_request_id}/account",
-                              status_code=status_code.HTTP_200_OK, response_model=AirlockRequestAccountResponse,
-                              name=strings.API_AIRLOCK_REQUEST_ACCOUNT,
-                              dependencies=[Depends(get_current_workspace_owner_or_researcher_user_or_airlock_manager)])
-async def get_airlock_storage_account_method(workspace=Depends(get_deployed_workspace_by_id_from_path),
-                                            airlock_request=Depends(get_airlock_request_by_id_from_path)) -> AirlockRequestAccountResponse:
-    storage_account = get_account_by_request(airlock_request, workspace)
-    return AirlockRequestAccountResponse(account=storage_account)

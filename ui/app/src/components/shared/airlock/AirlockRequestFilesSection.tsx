@@ -17,8 +17,9 @@ import { ApiEndpoint } from "../../../models/apiEndpoints";
 import { APIError } from "../../../models/exceptions";
 import { ExceptionLayout } from "../ExceptionLayout";
 import { CliCommand } from "../CliCommand";
-import { useAuthStorageCall } from "../../../hooks/useAuthStorageCall";
+import { useSasStorageCall } from "../../../hooks/useSasStorageCall";
 import { AirlockFileUpload } from "./AirlockFileUpload";
+import { parseSasUrl } from "../../../hooks/parseSasUrl";
 
 interface AirlockRequestFilesSectionProps {
   request: AirlockRequest;
@@ -45,10 +46,9 @@ export const AirlockRequestFilesSection: React.FunctionComponent<
   const [airlockUploadError, setAirlockUploadError] = useState({} as APIError);
 
   const [airlockFileDownloading, setAirlockFileDownloading] = useState(false);
-  const [airlockStorageAccount, setAirlockStorageAccount] = useState<string>('');
 
   const apiCall = useAuthApiCall();
-  const storageCall = useAuthStorageCall();
+  const storageCall = useSasStorageCall();
 
   const generateSasUrl = useCallback(async () => {
     if (props.request && props.request.workspaceId) {
@@ -67,20 +67,6 @@ export const AirlockRequestFilesSection: React.FunctionComponent<
     }
   }, [apiCall, props.request, props.workspaceApplicationIdURI]);
 
-  const parseSasUrl = (sasUrl: string) => {
-    const match = sasUrl.match(
-      /https:\/\/(.*?).blob.core.windows.net\/(.*)\?(.*)$/,
-    );
-    if (!match) {
-      return;
-    }
-
-    return {
-      StorageAccountName: match[1],
-      containerName: match[2],
-      sasToken: match[3],
-    };
-  };
 
   const handleCopySasUrl = () => {
     if (!sasUrl) {
@@ -116,34 +102,11 @@ export const AirlockRequestFilesSection: React.FunctionComponent<
     }
   }
 
-  const getAirlockStorageAccount = useCallback(async () => {
-    if (props.request && props.request.workspaceId) {
-      try {
-        const storageAccountName = await apiCall(
-          `${ApiEndpoint.Workspaces}/${props.request.workspaceId}/${ApiEndpoint.AirlockRequests}/${props.request.id}/${ApiEndpoint.AirlockAccount}`,
-          HttpMethod.Get,
-          props.workspaceApplicationIdURI
-        );
-        setAirlockStorageAccount(storageAccountName.account);
-        return storageAccountName.account;
-
-      } catch (err: any) {
-        err.userMessage = 'Error getting storage account name';
-        setAirlockUploadError(err);
-      }
-    }
-  }, [apiCall, props.request, props.workspaceApplicationIdURI]);
-
   const getAirlockFiles = useCallback(async () => {
     if (props.request && props.request.workspaceId) {
       try {
         setAirlockFilesLoading(true);
-        let storageName = await getAirlockStorageAccount();
-
-        const endpoint = `${props.request.id}?restype=container&comp=list`;
-        const files = await storageCall(storageName,
-          HttpMethod.Get,
-          endpoint);
+        const files = await storageCall(`${sasUrl}&comp=list&restype=container`, HttpMethod.Get);
         let filesXml = await files?.text() ?? '';
         let parser = new DOMParser();
         let xmlDoc = parser.parseFromString(filesXml, "text/xml");
@@ -162,7 +125,7 @@ export const AirlockRequestFilesSection: React.FunctionComponent<
       }
       setAirlockFilesLoading(false)
     }
-  }, [storageCall, props.request, getAirlockStorageAccount]);
+  }, [storageCall, props.request, sasUrl]);
 
   const handleDeleteFile = async (fileName: string) => {
     if (!fileName) {
@@ -172,13 +135,7 @@ export const AirlockRequestFilesSection: React.FunctionComponent<
     if (props.request && props.request.workspaceId) {
       try {
         setAirlockFilesLoading(true)
-
-        const airlock_container_name = props.request.id;
-        const filePath = `${airlock_container_name}/${fileName}`;
-        await storageCall(airlockStorageAccount,
-          HttpMethod.Delete,
-          filePath
-        );
+        await storageCall(`${sasUrl}`, HttpMethod.Delete);
 
         await getAirlockFiles();
       } catch (err: any) {
@@ -199,13 +156,10 @@ export const AirlockRequestFilesSection: React.FunctionComponent<
       try {
         setAirlockFileDownloading(true);
 
-        // get the airlock container name (airlock request id)
-        const airlock_container_name = props.request.id;
+        const sasDetails = parseSasUrl(`${sasUrl}`);
+        const deleteUrl = `https://${sasDetails?.StorageAccountName}.blob.core.windows.net/${sasDetails?.containerName}/${fileName}?${sasDetails?.sasToken}`;
 
-        const filePath = `${airlock_container_name}/${fileName}`;
-        const response = await storageCall(airlockStorageAccount,
-          HttpMethod.Get,
-          filePath);
+        const response = await storageCall(`${deleteUrl}`, HttpMethod.Get);
         if (!response || !response.ok) {
           throw new Error("No response from storage call");
         }
@@ -233,12 +187,14 @@ export const AirlockRequestFilesSection: React.FunctionComponent<
 
   useEffect(() => {
     const fetchData = async () => {
-      await getAirlockStorageAccount();
       await getAirlockFiles();
     }
     fetchData();
+  }, [getAirlockFiles]);
+
+  useEffect(() => {
     generateSasUrl();
-  }, [generateSasUrl, getAirlockFiles, getAirlockStorageAccount]);
+  }, [generateSasUrl]);
 
   return (
     <Stack>
@@ -352,7 +308,7 @@ export const AirlockRequestFilesSection: React.FunctionComponent<
             {
               props.request.status === AirlockRequestStatus.Draft && airlockFiles.length === 0 &&
               <AirlockFileUpload title="Upload a file"
-                storageAccount={airlockStorageAccount}
+                sasUrl={sasUrl}
                 containerName={props.request.id}
                 onUploadComplete={handleUploadComplete} />
             }

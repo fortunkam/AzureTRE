@@ -2,12 +2,12 @@ import React, { useRef, useState } from 'react';
 import { PrimaryButton, Spinner, Stack } from '@fluentui/react';
 import { ExceptionLayout } from '../ExceptionLayout';
 import { APIError } from '../../../models/exceptions';
-import { useAuthStorageCall } from '../../../hooks/useAuthStorageCall';
-import { StorageResourceType } from '../../../models/storage';
+import { useSasStorageCall } from '../../../hooks/useSasStorageCall';
 import { HttpMethod } from '../../../hooks/useAuthApiCall';
+import { parseSasUrl } from "../../../hooks/parseSasUrl";
 
 interface AirlockFileUploadProps {
-    storageAccount: string;
+    sasUrl: string;
     title: string;
     containerName: string;
     onUploadComplete?: (success: boolean) => void;
@@ -21,7 +21,7 @@ export const AirlockFileUpload: React.FunctionComponent<AirlockFileUploadProps> 
     const [airlockUploadError, setAirlockUploadError] = useState({} as APIError);
     const inputFile = useRef<HTMLInputElement>(null);
 
-    const storageCall = useAuthStorageCall();
+    const storageCall = useSasStorageCall();
 
 
     const handleFileUpload = () => {
@@ -36,16 +36,15 @@ export const AirlockFileUpload: React.FunctionComponent<AirlockFileUploadProps> 
             const file = event.target.files?.item(0);
             const fileName = file?.name;
             if (file) {
-                const put_blob_endpoint = `${props.containerName}/${fileName}`;
-
                 const headers: [string, string][] = []
                 headers.push(['x-ms-blob-type', 'BlockBlob'])
 
-                const response = await storageCall(props.storageAccount,
+                const sasDetails = parseSasUrl(`${props.sasUrl}`);
+                const uploadUrl = `https://${sasDetails?.StorageAccountName}.blob.core.windows.net/${sasDetails?.containerName}/${fileName}?${sasDetails?.sasToken}`;
+
+                const response = await storageCall(uploadUrl,
                     HttpMethod.Put,
-                    put_blob_endpoint,
-                    headers, file,
-                    StorageResourceType.Blob);
+                    headers, file);
 
                 if (!response) {
                     throw new Error("No response from storage call");
@@ -54,7 +53,7 @@ export const AirlockFileUpload: React.FunctionComponent<AirlockFileUploadProps> 
                     let e = new APIError();
                     e.message = await response.text();
                     e.status = response.status;
-                    e.endpoint = put_blob_endpoint;
+                    e.endpoint = props.sasUrl;
                     throw e;
                 }
 
