@@ -45,6 +45,8 @@ resource "azurerm_storage_account" "sa_import_external" {
   lifecycle { ignore_changes = [infrastructure_encryption_enabled, tags] }
 }
 
+
+
 resource "azurerm_private_endpoint" "stg_import_external_pe" {
   name                = "pe-stg-import-external-blob-${var.tre_id}"
   location            = var.location

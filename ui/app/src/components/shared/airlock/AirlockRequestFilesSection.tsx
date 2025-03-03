@@ -7,6 +7,8 @@ import {
   Stack,
   TextField,
   TooltipHost,
+  DefaultButton,
+  Spinner,
 } from "@fluentui/react";
 import React, { useCallback, useEffect, useState } from "react";
 import { HttpMethod, useAuthApiCall } from "../../../hooks/useAuthApiCall";
@@ -15,6 +17,8 @@ import { ApiEndpoint } from "../../../models/apiEndpoints";
 import { APIError } from "../../../models/exceptions";
 import { ExceptionLayout } from "../ExceptionLayout";
 import { CliCommand } from "../CliCommand";
+import { useAuthStorageCall } from "../../../hooks/useAuthStorageCall";
+import { AirlockFileUpload } from "./AirlockFileUpload";
 
 interface AirlockRequestFilesSectionProps {
   request: AirlockRequest;
@@ -34,7 +38,17 @@ export const AirlockRequestFilesSection: React.FunctionComponent<
   const [sasUrlError, setSasUrlError] = useState(false);
   const [apiSasUrlError, setApiSasUrlError] = useState({} as APIError);
 
+  const [airlockFiles, setAirlockFiles] = useState<string[]>([]);
+  const [airlockFilesLoading, setAirlockFilesLoading] = useState(true);
+
+  const [hasAirlockUploadError, setHasAirlockUploadError] = useState(false);
+  const [airlockUploadError, setAirlockUploadError] = useState({} as APIError);
+
+  const [airlockFileDownloading, setAirlockFileDownloading] = useState(false);
+  const [airlockStorageAccount, setAirlockStorageAccount] = useState<string>('');
+
   const apiCall = useAuthApiCall();
+  const storageCall = useAuthStorageCall();
 
   const generateSasUrl = useCallback(async () => {
     if (props.request && props.request.workspaceId) {
@@ -96,9 +110,135 @@ export const AirlockRequestFilesSection: React.FunctionComponent<
     return cliCommand;
   };
 
+  const handleUploadComplete = (success: boolean) => {
+    if (success) {
+      getAirlockFiles();
+    }
+  }
+
+  const getAirlockStorageAccount = useCallback(async () => {
+    if (props.request && props.request.workspaceId) {
+      try {
+        const storageAccountName = await apiCall(
+          `${ApiEndpoint.Workspaces}/${props.request.workspaceId}/${ApiEndpoint.AirlockRequests}/${props.request.id}/${ApiEndpoint.AirlockAccount}`,
+          HttpMethod.Get,
+          props.workspaceApplicationIdURI
+        );
+        setAirlockStorageAccount(storageAccountName.account);
+        return storageAccountName.account;
+
+      } catch (err: any) {
+        err.userMessage = 'Error getting storage account name';
+        setAirlockUploadError(err);
+      }
+    }
+  }, [apiCall, props.request, props.workspaceApplicationIdURI]);
+
+  const getAirlockFiles = useCallback(async () => {
+    if (props.request && props.request.workspaceId) {
+      try {
+        setAirlockFilesLoading(true);
+        let storageName = await getAirlockStorageAccount();
+
+        const endpoint = `${props.request.id}?restype=container&comp=list`;
+        const files = await storageCall(storageName,
+          HttpMethod.Get,
+          endpoint);
+        let filesXml = await files?.text() ?? '';
+        let parser = new DOMParser();
+        let xmlDoc = parser.parseFromString(filesXml, "text/xml");
+        let blobs = xmlDoc.getElementsByTagName("Blob");
+        let filesArray: string[] = [];
+        for (let i = 0; i < blobs.length; i++) {
+          filesArray.push(blobs[i].getElementsByTagName("Name")[0].textContent as string);
+        }
+
+        setAirlockFiles(filesArray);
+
+      } catch (err: any) {
+        err.userMessage = 'Error retrieving files';
+        setAirlockUploadError(err);
+        setHasAirlockUploadError(true);
+      }
+      setAirlockFilesLoading(false)
+    }
+  }, [storageCall, props.request, getAirlockStorageAccount]);
+
+  const handleDeleteFile = async (fileName: string) => {
+    if (!fileName) {
+      return;
+    }
+
+    if (props.request && props.request.workspaceId) {
+      try {
+        setAirlockFilesLoading(true)
+
+        const airlock_container_name = props.request.id;
+        const filePath = `${airlock_container_name}/${fileName}`;
+        await storageCall(airlockStorageAccount,
+          HttpMethod.Delete,
+          filePath
+        );
+
+        await getAirlockFiles();
+      } catch (err: any) {
+        err.userMessage = 'Error retrieving files';
+        setAirlockUploadError(err);
+        setHasAirlockUploadError(true);
+      }
+      setAirlockFilesLoading(false)
+    }
+  }
+
+  const handleDownloadFile = async (fileName: string) => {
+    if (!fileName) {
+      return;
+    }
+
+    if (props.request && props.request.workspaceId) {
+      try {
+        setAirlockFileDownloading(true);
+
+        // get the airlock container name (airlock request id)
+        const airlock_container_name = props.request.id;
+
+        const filePath = `${airlock_container_name}/${fileName}`;
+        const response = await storageCall(airlockStorageAccount,
+          HttpMethod.Get,
+          filePath);
+        if (!response || !response.ok) {
+          throw new Error("No response from storage call");
+        }
+
+        const file = await response.blob();
+
+        const url = window.URL.createObjectURL(file);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        // the filename you want
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+
+      } catch (err: any) {
+        err.userMessage = 'Error downloading file';
+      }
+      setAirlockFileDownloading(false);
+
+    }
+  }
+
   useEffect(() => {
+    const fetchData = async () => {
+      await getAirlockStorageAccount();
+      await getAirlockFiles();
+    }
+    fetchData();
     generateSasUrl();
-  }, [generateSasUrl]);
+  }, [generateSasUrl, getAirlockFiles, getAirlockStorageAccount]);
 
   return (
     <Stack>
@@ -164,6 +304,68 @@ export const AirlockRequestFilesSection: React.FunctionComponent<
               />
             </Stack.Item>
           </Stack>
+        </PivotItem>
+        <PivotItem headerText="Direct Upload">
+          <Stack>
+            {
+              !airlockFilesLoading &&
+              <Stack.Item style={{ paddingTop: '10px', paddingBottom: '10px' }}>
+                {
+                  airlockFiles.length === 0 ?
+                    <small>There is currently no file attached to this request.</small> :
+                    <small>The following file is attached to this airlock request.</small>
+                }
+              </Stack.Item>
+            }
+            {
+              !airlockFilesLoading && airlockFiles.map(fileName =>
+                <Stack.Item style={{ paddingTop: '10px', paddingBottom: '10px' }}>
+                  <Stack horizontal styles={{ root: { alignItems: 'center', paddingTop: '7px' } }}>
+                    <Stack.Item grow>
+                      <TextField readOnly value={fileName} />
+                    </Stack.Item>
+                    {
+                      props.request.status === AirlockRequestStatus.Draft &&
+                      <DefaultButton
+                        iconProps={{ iconName: 'delete' }}
+                        styles={{ root: { minWidth: '40px', backgroundColor: 'rgb(232, 17, 35)', color: 'white' } }}
+                        onClick={() => { handleDeleteFile(fileName) }}
+                      />
+                    }
+                    {
+                      (props.request.status === AirlockRequestStatus.Approved) &&
+                      <PrimaryButton
+                        iconProps={{ iconName: 'download' }}
+                        styles={{ root: { minWidth: '40px' } }}
+                        onClick={() => { handleDownloadFile(fileName) }}
+                        disabled={airlockFileDownloading}
+                      >
+                        {airlockFileDownloading && <Spinner />}
+                      </PrimaryButton>
+                    }
+
+                  </Stack>
+                </Stack.Item>
+              )}
+          </Stack>
+          {!airlockFilesLoading && <Stack>
+            {
+              props.request.status === AirlockRequestStatus.Draft && airlockFiles.length === 0 &&
+              <AirlockFileUpload title="Upload a file"
+                storageAccount={airlockStorageAccount}
+                containerName={props.request.id}
+                onUploadComplete={handleUploadComplete} />
+            }
+
+          </Stack>
+          }
+          {
+            airlockFilesLoading && <Stack>
+              <Stack.Item style={{ paddingTop: '10px', paddingBottom: '10px' }}>
+                <Spinner />
+              </Stack.Item>
+            </Stack>
+          }
         </PivotItem>
       </Pivot>
       {sasUrlError && <ExceptionLayout e={apiSasUrlError} />}

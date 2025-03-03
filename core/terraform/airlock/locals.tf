@@ -64,4 +64,24 @@ locals {
   servicebus_connection              = "SERVICEBUS_CONNECTION"
   step_result_eventgrid_connection   = "EVENT_GRID_STEP_RESULT_CONNECTION"
   data_deletion_eventgrid_connection = "EVENT_GRID_DATA_DELETION_CONNECTION"
+
+  airlock_api_read_write_cors_rules = [
+    {
+      allowedOrigins = [var.app_gateway_fqdn]
+      allowedMethods = ["GET, PUT, DELETE"]
+      allowedHeaders = ["*"]
+      exposedHeaders = []
+      maxAgeInSeconds = 3600
+    }
+  ]
+
+  airlock_api_read_only_cors_rules = [
+    {
+      allowedOrigins = [var.app_gateway_fqdn]
+      allowedMethods = ["GET"]
+      allowedHeaders = ["*"]
+      exposedHeaders = []
+      maxAgeInSeconds = 3600
+    }
+  ]
 }

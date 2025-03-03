@@ -15,7 +15,7 @@ from db.errors import EntityDoesNotExist, UserNotAuthorizedToUseTemplate
 from api.dependencies.workspaces import get_workspace_by_id_from_path, get_deployed_workspace_by_id_from_path
 from api.dependencies.airlock import get_airlock_request_by_id_from_path
 from models.domain.airlock_request import AirlockRequestStatus, AirlockRequestType
-from models.schemas.airlock_request_url import AirlockRequestTokenInResponse
+from models.schemas.airlock_request_url import AirlockRequestAccountResponse, AirlockRequestTokenInResponse
 from models.schemas.airlock_request import AirlockRequestAndOperationInResponse, AirlockRequestInCreate, AirlockRequestWithAllowedUserActions, \
     AirlockRequestWithAllowedUserActionsInList, AirlockReviewInCreate
 from resources import strings
@@ -24,7 +24,7 @@ from services.authentication import get_current_workspace_owner_or_researcher_us
 
 from .resource_helpers import construct_location_header
 
-from services.airlock import create_review_vm, review_airlock_request, get_airlock_container_link, get_allowed_actions, save_and_publish_event_airlock_request, update_and_publish_event_airlock_request, \
+from services.airlock import create_review_vm, get_account_by_request, review_airlock_request, get_airlock_container_link, get_allowed_actions, save_and_publish_event_airlock_request, update_and_publish_event_airlock_request, \
     enrich_requests_with_allowed_actions, get_airlock_requests_by_user_and_workspace, cancel_request
 from services.logging import logger
 
@@ -184,3 +184,12 @@ async def get_airlock_container_link_method(workspace=Depends(get_deployed_works
                                             user=Depends(get_current_workspace_owner_or_researcher_user_or_airlock_manager)) -> AirlockRequestTokenInResponse:
     container_url = get_airlock_container_link(airlock_request, user, workspace)
     return AirlockRequestTokenInResponse(containerUrl=container_url)
+
+@airlock_workspace_router.get("/workspaces/{workspace_id}/requests/{airlock_request_id}/account",
+                              status_code=status_code.HTTP_200_OK, response_model=AirlockRequestAccountResponse,
+                              name=strings.API_AIRLOCK_REQUEST_ACCOUNT,
+                              dependencies=[Depends(get_current_workspace_owner_or_researcher_user_or_airlock_manager)])
+async def get_airlock_storage_account_method(workspace=Depends(get_deployed_workspace_by_id_from_path),
+                                            airlock_request=Depends(get_airlock_request_by_id_from_path)) -> AirlockRequestAccountResponse:
+    storage_account = get_account_by_request(airlock_request, workspace)
+    return AirlockRequestAccountResponse(account=storage_account)

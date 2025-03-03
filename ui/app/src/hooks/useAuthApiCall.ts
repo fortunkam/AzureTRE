@@ -18,6 +18,7 @@ export enum HttpMethod {
   Post = "POST",
   Patch = "PATCH",
   Delete = "DELETE",
+  Put = "PUT",
 }
 
 export const useAuthApiCall = () => {

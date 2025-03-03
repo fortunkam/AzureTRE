@@ -148,11 +148,13 @@ module "airlock_resources" {
   enable_cmk_encryption         = var.enable_cmk_encryption
   encryption_key_versionless_id = var.enable_cmk_encryption ? azurerm_key_vault_key.tre_encryption[0].versionless_id : null
   encryption_identity_id        = var.enable_cmk_encryption ? azurerm_user_assigned_identity.encryption[0].id : null
+  app_gateway_fqdn               = module.appgateway.app_gateway_fqdn
 
   depends_on = [
     azurerm_servicebus_namespace.sb,
     module.network,
-    azurerm_key_vault_key.tre_encryption[0]
+    azurerm_key_vault_key.tre_encryption[0],
+    module.appgateway
   ]
 }
 
